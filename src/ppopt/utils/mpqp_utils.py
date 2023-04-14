@@ -91,26 +91,21 @@ def gen_cr_from_active_set(program: MPQP_Program, active_set: List[int], check_f
     :return: Returns the associated critical region if fully dimensional else returns None
     """
 
-    # gather some convenience variables
     num_equality = program.num_equality_constraints()
 
-    # compute the optimal control law for the region based on the active set
-    parameter_A, parameter_b, lagrange_A, lagrange_b \
-        = program.optimal_control_law(active_set)
+    parameter_A, parameter_b, lagrange_A, lagrange_b = program.optimal_control_law(active_set)
 
-    # collect the generally-applicable critical region constraints:
-    #   - translate lagrange constraints from the optimal control law
+    # lagrange constraints
     active = active_set[num_equality:]
     lambda_A, lambda_b = -lagrange_A[num_equality:], lagrange_b[num_equality:]
     # remove constraints of only zeros
-    lambda_nonzeros = [i for i, t in enumerate(lambda_A)
+    lamba_nonzeros = [i for i, t in enumerate(lambda_A)
                        if numpy.nonzero(t)[0].shape[0] > 0]
-    active = [active[indx] for indx in lambda_nonzeros]
-    lambda_A = lambda_A[lambda_nonzeros]
-    lambda_b = lambda_b[lambda_nonzeros]
+    active = [active[indx] for indx in lamba_nonzeros]
+    lambda_A = lambda_A[lamba_nonzeros]
+    lambda_b = lambda_b[lamba_nonzeros]
 
-    #   - inactive constraints are transformed to the optimal control space to
-    # become region boundaries
+    # inactive
     inactive = [i for i in range(program.num_constraints()) if i not in active_set]
     inactive_A = program.A[inactive] @ parameter_A - program.F[inactive]
     inactive_b = program.b[inactive] - program.A[inactive] @ parameter_b
@@ -121,13 +116,14 @@ def gen_cr_from_active_set(program: MPQP_Program, active_set: List[int], check_f
     inactive_A = inactive_A[ineq_nonzeros]
     inactive_b = inactive_b[ineq_nonzeros]
 
-    #   - copy the parameter constraints from the program
+    # Theta Constraints
     omega_A, omega_b = program.A_t, program.b_t
 
-    #   - build array of all critical region constraints
-    CR_As, CR_bs = scale_constraint(
-        ppopt_block([[lambda_A], [inactive_A], [omega_A]]),
-        ppopt_block([[lambda_b], [inactive_b], [omega_b]]))
+    # Block of all critical region constraints
+    CR_As = ppopt_block([[lambda_A], [inactive_A], [omega_A]])
+    CR_bs = ppopt_block([[lambda_b], [inactive_b], [omega_b]])
+
+    CR_As, CR_bs = scale_constraint(CR_As, CR_bs)
 
 
     # if check_full_dim is set check if region is lower dimensional if so return None
@@ -137,14 +133,14 @@ def gen_cr_from_active_set(program: MPQP_Program, active_set: List[int], check_f
             return None
 
 
-    #   the critical region is fully dimensional, now remove all redundant ones to
-    # resolve the actual region boundaries from the full list of possible ones
+    # if it is fully dimensional we get to classify the constraints and then reduce them (important)!
+
     kept_lambda_indices = []
     kept_inequality_indices = []
     kept_omega_indices = []
 
-    # find non-redundant lagrange constraints
-    for index in range(len(lambda_nonzeros)):
+    # iterate over the non-zero lagrange constraints
+    for index in range(len(lamba_nonzeros)):
 
         sol = program.solver.solve_lp(None, CR_As, CR_bs, [index])
 
@@ -154,7 +150,7 @@ def gen_cr_from_active_set(program: MPQP_Program, active_set: List[int], check_f
     # iterate over the non-zero inequaltity constraints
     for index in range(len(ineq_nonzeros)):
 
-        sol = program.solver.solve_lp(None, CR_As, CR_bs, [index + len(lambda_nonzeros)])
+        sol = program.solver.solve_lp(None, CR_As, CR_bs, [index + len(lamba_nonzeros)])
 
         if sol is not None:
             kept_inequality_indices.append(index)
@@ -162,29 +158,29 @@ def gen_cr_from_active_set(program: MPQP_Program, active_set: List[int], check_f
     # iterate over the omega constraints
     for index in range(omega_A.shape[0]):
 
-        sol = program.solver.solve_lp(None, CR_As, CR_bs, [index + len(lambda_nonzeros) + len(ineq_nonzeros)])
+        sol = program.solver.solve_lp(None, CR_As, CR_bs, [index + len(lamba_nonzeros) + len(ineq_nonzeros)])
 
         if sol is not None:
             kept_omega_indices.append(index)
 
-    # remove all redundant constraints
+    # create out reduced Critical region constraint block
     CR_As = ppopt_block(
         [[lambda_A[kept_lambda_indices]], [inactive_A[kept_inequality_indices]], [omega_A[kept_omega_indices]]])
     CR_bs = ppopt_block(
         [[lambda_b[kept_lambda_indices]], [inactive_b[kept_inequality_indices]], [omega_b[kept_omega_indices]]])
 
 
-    # classify the remaining constraints
+    # recover the lambda boundaries that remain
     relevant_lambda = [active[index] for index in kept_lambda_indices]
-    #   save the inequality constraint indices in two reference frames: indexing
-    # just the inequality constraints, and indexing all constraints, respectively
+
     real_regular = [inactive[index] for index in kept_inequality_indices]
     regular = [kept_inequality_indices, real_regular]
 
 
-    # rescale and remove any duplicate constraints
-    CR_As, CR_bs = scale_constraint(CR_As, CR_bs)
+    # remove any possible duplicate constraints
+    # and rescale since we did not rescale this particular set of constraints!!!
     CR_As, CR_bs = remove_duplicate_rows(CR_As, CR_bs)
+    CR_As, CR_bs = scale_constraint(CR_As, CR_bs)
 
 
     return CriticalRegion(parameter_A, parameter_b, lagrange_A, lagrange_b, CR_As, CR_bs, active_set,
