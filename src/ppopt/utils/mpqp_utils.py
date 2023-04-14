@@ -93,7 +93,6 @@ def gen_cr_from_active_set(program: MPQP_Program, active_set: List[int], check_f
 
     # gather some convenience variables
     num_equality = program.num_equality_constraints()
-    inactive = [i for i in range(program.num_constraints()) if i not in active_set]
 
     # compute the optimal control law for the region based on the active set
     parameter_A, parameter_b, lagrange_A, lagrange_b \
@@ -101,20 +100,24 @@ def gen_cr_from_active_set(program: MPQP_Program, active_set: List[int], check_f
 
     # collect the generally-applicable critical region constraints:
     #   - translate lagrange constraints from the optimal control law
+    active = active_set[num_equality:]
     lambda_A, lambda_b = -lagrange_A[num_equality:], lagrange_b[num_equality:]
     # remove constraints of only zeros
     lambda_nonzeros = [i for i, t in enumerate(lambda_A)
                        if numpy.nonzero(t)[0].shape[0] > 0]
+    active = [active[indx] for indx in lambda_nonzeros]
     lambda_A = lambda_A[lambda_nonzeros]
     lambda_b = lambda_b[lambda_nonzeros]
 
     #   - inactive constraints are transformed to the optimal control space to
     # become region boundaries
+    inactive = [i for i in range(program.num_constraints()) if i not in active_set]
     inactive_A = program.A[inactive] @ parameter_A - program.F[inactive]
     inactive_b = program.b[inactive] - program.A[inactive] @ parameter_b
     # remove constraints of only zeros
     ineq_nonzeros = [i for i, t in enumerate(inactive_A)
                      if numpy.nonzero(t)[0].shape[0] > 0]
+    inactive = [inactive[indx] for indx in ineq_nonzeros]
     inactive_A = inactive_A[ineq_nonzeros]
     inactive_b = inactive_b[ineq_nonzeros]
 
@@ -172,7 +175,9 @@ def gen_cr_from_active_set(program: MPQP_Program, active_set: List[int], check_f
 
 
     # classify the remaining constraints
-    relevant_lambda = [active_set[num_equality + index] for index in kept_lambda_indices]
+    relevant_lambda = [active[index] for index in kept_lambda_indices]
+    #   save the inequality constraint indices in two reference frames: indexing
+    # just the inequality constraints, and indexing all constraints, respectively
     real_regular = [inactive[index] for index in kept_inequality_indices]
     regular = [kept_inequality_indices, real_regular]
 
