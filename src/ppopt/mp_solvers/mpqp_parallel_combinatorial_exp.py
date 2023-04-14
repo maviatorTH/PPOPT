@@ -5,11 +5,11 @@ from typing import List
 # noinspection PyProtectedMember
 from pathos.multiprocessing import ProcessingPool as Pool
 
-from .solver_utils import generate_children_sets
 from ..mpqp_program import MPQP_Program
 from ..solution import Solution
 from ..utils.general_utils import num_cpu_cores
 from ..utils.mpqp_utils import gen_cr_from_active_set
+from .solver_utils import generate_children_sets
 
 
 def full_process(program: MPQP_Program, active_set: List[int]):
@@ -82,7 +82,12 @@ def solve(program: MPQP_Program, num_cores=-1) -> Solution:
     pool = Pool(num_cores)
     print(f'Spawned threads across {num_cores}')
 
-    # check if program is feasible and exit early if not
+    to_check = []
+
+    solution = Solution(program, [])
+
+    max_depth = max(program.num_x(), program.num_t()) - len(program.equality_indices)
+
     if not program.check_feasibility(program.equality_indices):
         return solution
 
@@ -105,7 +110,12 @@ def solve(program: MPQP_Program, num_cores=-1) -> Solution:
         print(f'Time at depth test {i + 1}, {time.time() - start}')
         print(f'Number of active sets to be considered is {len(to_check)}')
 
-        # randomly reorder the sets of constraints to check
+        depth_time = time.time()
+
+        f = lambda x: full_process(program, x)
+
+        future_list = []
+
         shuffle(to_check)
 
         # queue the list of constraint combinations for parallel processing
